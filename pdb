@@ -1,0 +1,543 @@
+#!/usr/bin/env bash
+#
+# Used as a wrapper to Rob Browning's scripts
+#
+# Prerequisites:
+#   - Postgres 9.6+
+#   - pgbox script on your $PATH
+#
+# Exit codes
+# 0 - All good
+# 1 - command format error
+# 2 - incorrect current working directory
+# NOTE: shell pipefail enabled, exit codes could be due to failing subcommand as well
+
+set -euo pipefail
+
+script_version='1.0.0'
+##########################################
+# Static configs                         #
+##########################################
+# These configs should be stable across  #
+# time, but may differ between users.    #
+##########################################
+# Full path to PDB project
+pdb_dir=~/wrk/pdb/puppetdb/main
+pe_pdb_dir=~/wrk/pdb/pe-puppetdb-extensions/main
+# Full path the postgres install
+# On a Mac it should look something like
+# pg_bin=/Applications/Postgres.app/Contents/Versions/11/bin/
+pg_bin=/usr/pgsql-11/bin
+# Full path to postgres sandbox. All pg instances will live here
+# and the pg_tmpdir variable will select which one
+pg_sandbox=~/sandbox/pdb
+##########################################
+# End Static configs                     #
+##########################################
+mkdir -p $pg_sandbox
+
+# These files live in the pdb repo, if they don't...
+# well... you're shit outta luck and this won't work anymore
+pdbbox_init=$pdb_dir/ext/bin/pdbbox-init
+pe_pdbbox_init=$pe_pdb_dir/ext/bin/pe-pdbbox-init
+pdbbox_env=$pdb_dir/ext/bin/pdbbox-env
+
+# Name of the default dir to store postgres data inside
+# Can be overridden with the --name option
+pg_tmpdir=tmp_pg
+
+# A utility to pipe output to STDERR.
+# Any command that outputs to stdout, such as echo,
+# can be redirected by following the commmand with a pipe to
+# the STDERR function.
+#
+# Usage: command | STDERR
+STDERR() {
+  cat - 1>&2
+}
+
+# A utility to pipe output to STDOUT.
+# Any command that takes the above function, STDERR,
+# as an argument can be made to output to STDOUT using this
+# function. This is used to output help text to STDOUT when
+# the flag is present.
+#
+# Usage: command | STDOUT
+STDOUT() {
+  cat -
+}
+
+print_err_line() {
+  echo "$@" | STDERR
+}
+
+log_error() {
+  print_err_line "ERROR: $@"
+}
+
+log_warn() {
+  print_err_line "WARNING: $@"
+}
+
+log_info() {
+  print_err_line "INFO: $@"
+}
+
+log_debug() {
+  print_err_line "DEBUG: $@"
+}
+
+empty_err_line() {
+  echo "" | STDERR
+}
+
+usage_text() {
+  echo "A single command is required. Print available commands and options with 'pdb --help'" | $1
+  echo "" | $1
+  echo "Usage: pdb [nice] <command> [options] [-- [command-args]]" | $1
+}
+
+usage() {
+  usage_text STDERR
+  exit 1
+}
+
+usage_full() {
+  # Allows a non-failure usage message to be printed with the -h or --help flags
+  exit_code=1
+  prn=print_err_line
+  if [ "$#" -eq 1 -a "$1" -eq 0 ]; then
+    exit_code=0
+    prn=echo
+
+    usage_text STDOUT
+  else
+    usage_text STDERR
+  fi
+
+
+  $prn
+
+  $prn "Commands"
+  $prn "    benchmark      Submit benchmark data to (pe-)puppetdb"
+  $prn "    clean          Clean up unneeded files (lein distclean)"
+  $prn "    edit           Edit the puppetdb config files"
+  $prn "    integration    Run the integration tests"
+  $prn "        :only [clojure.ns/test]+"
+  $prn "        -- [setup-only] [test-only] [puppet_ref [puppetserver_ref]]"
+  $prn
+  $prn "    init           Initialize a postgres database for pe-puppetdb,"
+  $prn "                     or puppetdb if pe-pdbbox-init cannot be found."
+  $prn "    init-sync      Configure HA sync between two PE pdbboxes"
+  $prn "        -- <pe-pdbbox-name> <pe-pdbbox-name>"
+  $prn "    new-db         Drop and recreate the puppetdb database"
+  $prn "    pe-db          Convert a FOSS database to a PE database"
+  $prn "    pgenv          (Experimental) Run an arbitrary command in the pg env"
+  $prn "        -- <commmand>"
+  $prn
+  $prn "    pglog          View the tail of the pg log"
+  $prn "    psql           Enter psql of puppetdb database"
+  $prn "    repl           Start the repl"
+  $prn "    run            Run puppetdb/pe-puppetdb (lein run services)"
+  $prn "    start          Start the postgres database"
+  $prn "    stop           Stop the postgres database"
+  $prn "    test           Run the unit tests"
+  $prn "        :only [clojure.ns/test]+"
+  $prn "    ext            Run the ext tests"
+
+  $prn
+
+  $prn "Options"
+  $prn "    -h, --help              Print the full help text"
+  $prn "    -n, --name <name>       Change the name for the pg box in the pg sandbox"
+  $prn "    -p, --port <number>     Set the port"
+  $prn "    -v, --verbose           Print debugging information as the command executes"
+  $prn "    --version               Print the script version"
+
+  $prn
+  $prn "Version $script_version"
+
+  exit $exit_code
+}
+
+fail_if_no_args() {
+  if [ "$1" -eq 0 ]; then
+    log_error "No arguments given."
+    usage
+  fi
+}
+
+project='niether'
+if grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null ; then
+  project='foss'
+elif grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null ; then
+  project='pe'
+fi
+
+verify_pwd() {
+  # if [ ! $(pwd) = $pe_pdb_dir -a ! $(pwd) = $pdb_dir ]; then
+  if ! (grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null || grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null) ; then
+    log_error "Current working directory $(pwd) does not appear to be puppetdb or pe-puppetdb-extensions"
+    exit 2
+  fi
+}
+
+verify_foss_pwd() {
+  if ! grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null ; then
+    log_error "Current working directory $(pwd) does not appear to be puppetdb"
+    exit 2
+  fi
+}
+
+verify_pe_pwd() {
+  if ! grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null ; then
+    log_error "Current working directory $(pwd) does not appear to be pe-puppetdb-extensions"
+    exit 2
+  fi
+}
+
+debug=0
+function debug() {
+  if [ $debug -eq 1 ]; then
+    return 0; # true
+  else
+    return 1; # false
+  fi
+}
+
+fail_if_no_args $#
+
+nice_cmd=
+subcommand=
+pg_port=
+# Only used for clojure tests this will process and save the ":only lein.ns.one lein.ns.two" args
+test_only=
+# Process flags
+while [ ! $# -eq 0 ]; do
+  case "$1" in
+    --)
+      # Loop has processed until the "--" which denotes the split
+      # between arguments to this utility and arguments to the subcommand.
+      # Shift the "--" off the argument list and now $@ will refer to the
+      # subcommand arguments.
+      if debug; then
+        log_debug "Encountered '--', finished processing pdb arguments and options"
+      fi
+      shift
+      break
+      ;;
+    --help | -h)
+      # Print full help text and exit with 0
+      usage_full 0
+      exit
+      ;;
+    --verbose | -v)
+      debug=1
+      log_info "Enabled verbose debugging output"
+      shift
+      ;;
+    --name | -n)
+      pg_tmpdir=$2
+      if debug; then
+        log_debug "Set pg_tmpdir=$2"
+      fi
+      shift 2
+      ;;
+    --port | -p)
+      pg_port=$2
+      shift 2
+      ;;
+    --pgver)
+      pg_bin="/usr/pgsql-$2/bin"
+      shift 2
+      ;;
+    --version)
+      shift
+      echo "PuppetDB Development Helper: $script_version"
+      exit 0
+      ;;
+    nice)
+      nice_cmd="nice $2"
+      if debug; then
+        log_debug "Using nice command '$nice_cmd'"
+      fi
+      shift 2
+      ;;
+    :only)
+      if [ "$subcommand" = test -o "$subcommand" = integration ]; then
+        test_only=":only"
+        shift
+        while [ ! $# -eq 0 ]; do
+          if [ $1 = "--" ]; then
+            break
+          else
+            test_only="$test_only $1"
+            shift
+          fi
+        done
+      else
+        log_error "Don't know what to do with option :only for '$subcommand'"
+        empty_err_line
+        usage_full 1
+      fi
+      ;;
+    *)
+      # If this is the first command, store it.
+      # If this is the second command, print error message and error.
+      if [ -z $subcommand ]; then
+        subcommand="$1"
+        if debug; then
+          log_debug "Using subcommand '$subcommand'"
+        fi
+        shift
+      else
+        log_error "Unknown argument:" $1
+        empty_err_line
+        usage
+      fi
+  esac
+done
+
+# Full path the to postgres tmpdir
+pg_tmpdir_fullpath="$pg_sandbox/$pg_tmpdir"
+
+# Export postgres info
+export PGUSER=puppetdb
+export PDBBOX=$pg_tmpdir_fullpath
+
+
+if debug; then
+  empty_err_line
+  log_debug "PDB project - " $pdb_dir
+  log_debug "PG sandbox - " $pg_sandbox
+  log_debug "PG temp dir - " $pg_tmpdir
+  log_debug "PG full path - " $pg_tmpdir_fullpath
+  log_debug "Command - " $subcommand
+  log_debug "Subcommand flags - " $@
+  empty_err_line
+  set -x
+fi
+
+function random_port {
+  python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
+}
+
+function config_test_refs {
+  puppet_ref=
+  puppetserver_ref=
+  case $# in
+    2)
+      puppet_ref=$1
+      puppetserver_ref=$2
+      ;;
+    1)
+      puppet_ref=$1
+      ;;
+    0)
+      ;;
+    *)
+      exit 3
+      ;;
+  esac
+
+  ext/bin/config-puppet-test-ref $puppet_ref
+  ext/bin/config-puppetserver-test-ref $puppetserver_ref
+}
+
+case $subcommand in
+  benchmark)
+    verify_pwd
+    if [ "$project" = "foss" ]; then
+      PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein trampoline run benchmark -c $pg_tmpdir_fullpath/conf.d \
+        --numhosts 10 --rand-perc 10 --nummsgs 1
+    elif [ "$project" = "pe" ]; then
+      cat > "$pg_tmpdir_fullpath/benchmark.ini" <<EOF
+[global]
+logging-config = $pg_tmpdir_fullpath/logback.xml
+
+[jetty]
+host = 0.0.0.0
+port = $(cat $pg_tmpdir_fullpath/pe-port)
+EOF
+
+      $pdbbox_env $nice_cmd lein run benchmark \
+        --config $pg_tmpdir_fullpath/benchmark.ini \
+        --catalogs $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/catalogs \
+        --reports $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/reports \
+        --facts $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/facts \
+        --numhosts 20 --rand-perc 1 --nummsgs 1
+        # --runinterval 30 --numhosts 1000 --rand-perc 10
+    else
+      log_error "Could not determine if $project was foss or pe puppetdb"
+      exit 3
+    fi
+    ;;
+  clean)
+    verify_foss_pwd
+    $pdbbox_env $nice_cmd lein distclean
+    ;;
+  edit)
+    $EDITOR $pg_tmpdir_fullpath/{conf.d/pdb.ini,pe.conf,conf.d/auth.conf}
+    ;;
+  integration)
+    verify_foss_pwd
+    run_tests=0
+    if [ "${1:-}" = "setup-only" ]; then
+      run_tests=1
+      shift
+    fi
+
+    run_setup=0
+    if [ "${1:-}" = "test-only" ]; then
+      run_setup=1
+      shift
+    fi
+
+    if [ 0 -eq $run_setup ]; then
+      config_test_refs $@
+    fi
+
+    # Run the integration test
+    if [ 0 -eq $run_tests ]; then
+      $pdbbox_env $nice_cmd lein test :integration $test_only
+    fi
+    ;;
+  init)
+    if test -e "$pg_tmpdir_fullpath"; then
+      read -p "$pg_tmpdir_fullpath already exists, do you want to overwrite it? " confirm
+      if [[ "$confirm" != y* ]] ; then
+        exit 0
+      fi
+    fi
+    # Destroys any existing pg_tmpdir configuration
+    # Creates pg_tmpdir configuration and starts postgres
+    ( pdb -n "$pg_tmpdir" stop && log_info "Stopped server" ) || log_info "No server running."
+    rm -rf $pg_tmpdir_fullpath
+
+    if [ "$1" = 'pe' -o -x $pe_pdbbox_init -a "$1" != 'foss' ]; then
+      $pe_pdbbox_init -s $pg_tmpdir_fullpath --pdbbin "$pdb_dir/ext/bin" --pdbport `random_port` --pdbport-ssl `random_port` --rbacport `random_port` --rbacport-ssl `random_port` --pgbin "$pg_bin" --pgport ${pg_port:-`random_port`} --bind-addr localhost
+    elif test "$1" = 'foss' -o -x $pdbbox_init -a "$1" != 'pe'; then
+      $pdbbox_init -s $pg_tmpdir_fullpath --pgbin "$pg_bin" --pgport ${pg_port:-`random_port`} --bind-addr localhost
+    fi
+    $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
+    ;;
+  init-sync)
+    pdb init -n sync1 -- pe
+    pdb init -n sync2 -- pe
+
+    pe_box1="$pg_sandbox/sync1"
+    pe_box2="$pg_sandbox/sync2"
+    test -f "$pe_box1/pe.conf" || usage
+    test -f "$pe_box2/pe.conf" || usage
+
+    pe_box1_port=$(cat "$pe_box1/pe-port")
+    pe_box1_sslport=$(cat "$pe_box1/pe-port-ssl")
+    pe_box2_port=$(cat "$pe_box2/pe-port")
+    pe_box2_sslport=$(cat "$pe_box2/pe-port-ssl")
+
+    # The certs are not valid for sync so we have to use cleartext sync
+    cat >> "$pe_box1/pe.conf" <<EOF
+
+sync: {
+  remotes: [{server_url: "http://localhost:$pe_box2_port",
+             interval: 2m}]
+  allow-unsafe-cleartext-sync: true
+}
+EOF
+    cat >> "$pe_box2/pe.conf" <<EOF
+
+sync: {
+  remotes: [{server_url: "http://localhost:$pe_box1_port",
+             interval: 2m}]
+  allow-unsafe-cleartext-sync: true
+}
+EOF
+    ;;
+  new-db)
+    # Create a new puppetdb databse without regenerating the whole pgbox
+    save_pguser="$PGUSER"
+    export PGUSER=postgres
+
+    $pdbbox_env psql -c 'DROP DATABASE puppetdb'
+
+    $pdbbox_env createdb -E UTF8 -O puppetdb puppetdb
+    $pdbbox_env psql puppetdb -c 'CREATE EXTENSION pg_trgm'
+    $pdbbox_env psql puppetdb -c 'CREATE EXTENSION pgcrypto'
+    $pdbbox_env psql puppetdb -c 'CREATE EXTENSION citext'
+
+    export PGUSER="$save_pguser"
+    ;;
+  pe-db)
+    # Convert an existing pdbbox to a pe-pdbbox
+    save_pguser="$PGUSER"
+    export PGUSER=postgres
+
+    # New databases for rbac and activity
+    $pdbbox_env createdb -E UTF8 -O puppetdb puppetdb_rbac
+    $pdbbox_env createdb -E UTF8 -O puppetdb puppetdb_activity
+
+    # All the extensions
+    $pdbbox_env psql puppetdb -c 'CREATE EXTENSION pgcrypto'
+    $pdbbox_env psql puppetdb -c 'CREATE EXTENSION citext'
+    $pdbbox_env psql puppetdb_rbac -c 'CREATE EXTENSION pg_trgm'
+    $pdbbox_env psql puppetdb_rbac -c 'CREATE EXTENSION pgcrypto'
+    $pdbbox_env psql puppetdb_rbac -c 'CREATE EXTENSION citext'
+    $pdbbox_env psql puppetdb_activity -c 'CREATE EXTENSION pg_trgm'
+    $pdbbox_env psql puppetdb_activity -c 'CREATE EXTENSION citext'
+
+    export PGUSER="$save_pguser"
+    ;;
+  pgenv)
+    set -x
+    $pdbbox_env $nice_cmd "$@"
+    ;;
+  pglog)
+    set -x
+    ls -Art $pg_tmpdir_fullpath/pg/data/log | tail -n 1 | xargs -I{} tail -fn 50 ~/sandbox/pdb/tmp_pg/pg/data/log/{}
+    ;;
+  psql)
+    $pdbbox_env psql puppetdb
+    ;;
+  repl)
+    verify_pwd
+    # Start the lein repl project using the pg_tmpdir
+    $pdbbox_env $nice_cmd lein repl
+    ;;
+  run)
+    verify_pwd
+    if [ "$project" = 'foss' ]; then
+      $pdbbox_env $nice_cmd lein run services -c $pg_tmpdir_fullpath/conf.d
+    elif [ "$project" = 'pe' ]; then
+      $pdbbox_env $nice_cmd lein run services -c $pg_tmpdir_fullpath/pe.conf
+    fi
+    ;;
+  start)
+    $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
+    ;;
+  stop)
+    $pdbbox_env pg_ctl stop
+    ;;
+  test)
+    verify_pwd
+
+    # Run the unit tests
+    $pdbbox_env $nice_cmd lein test $test_only
+    ;;
+  ext)
+    verify_foss_pwd
+
+    log_warn "The ext command will create temporary pdbboxes for each test, bypassing anything in the one specified by the script"
+    # The tests will always create their own boxes, so get them a new port
+    ext/bin/test-config --set pgport `random_port`
+    ext/bin/test-config --set pgbin "$pg_bin"
+
+    ext/bin/run-external-tests
+
+    ;;
+  *)
+    log_error "\'${subcommand}\' not recognized"
+    usage
+    ;;
+esac
+
+exit 0
