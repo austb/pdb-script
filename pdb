@@ -414,9 +414,9 @@ EOF
     ( pdb -n "$pg_tmpdir" stop && log_info "Stopped server" ) || log_info "No server running."
     rm -rf $pg_tmpdir_fullpath
 
-    if [ "$1" = 'pe' -o -x $pe_pdbbox_init -a "$1" != 'foss' ]; then
+    if [ "${1:-}" = 'pe' -o -x $pe_pdbbox_init -a "${1:-}" != 'foss' ]; then
       $pe_pdbbox_init -s $pg_tmpdir_fullpath --pdbbin "$pdb_dir/ext/bin" --pdbport `random_port` --pdbport-ssl `random_port` --rbacport `random_port` --rbacport-ssl `random_port` --pgbin "$pg_bin" --pgport ${pg_port:-`random_port`} --bind-addr localhost
-    elif test "$1" = 'foss' -o -x $pdbbox_init -a "$1" != 'pe'; then
+    elif test "${1:-}" = 'foss' -o -x $pdbbox_init -a "${1:-}" != 'pe'; then
       $pdbbox_init -s $pg_tmpdir_fullpath --pgbin "$pg_bin" --pgport ${pg_port:-`random_port`} --bind-addr localhost
     fi
     $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
