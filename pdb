@@ -120,6 +120,7 @@ usage_full() {
 
   $prn "Commands"
   $prn "    benchmark      Submit benchmark data to (pe-)puppetdb"
+  $prn "        -- [number of nodes]"
   $prn "    clean          Clean up unneeded files (lein distclean)"
   $prn "    edit           Edit the puppetdb config files"
   $prn "    integration    Run the integration tests"
@@ -347,9 +348,15 @@ function config_test_refs {
 case $subcommand in
   benchmark)
     verify_pwd
+    numhosts=10
+    if [ "$#" -eq 1 ]; then
+      numhosts="$1"
+      shift
+    fi
+
     if [ "$project" = "foss" ]; then
       PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein trampoline run benchmark -c $pg_tmpdir_fullpath/conf.d \
-        --numhosts 10 --rand-perc 10 --nummsgs 1
+        --numhosts "$numhosts" --rand-perc 10 --nummsgs 1
     elif [ "$project" = "pe" ]; then
       cat > "$pg_tmpdir_fullpath/benchmark.ini" <<EOF
 [global]
@@ -365,8 +372,7 @@ EOF
         --catalogs $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/catalogs \
         --reports $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/reports \
         --facts $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/facts \
-        --numhosts 20 --rand-perc 1 --nummsgs 1
-        # --runinterval 30 --numhosts 1000 --rand-perc 10
+        --numhosts "$numhosts" --rand-perc 10 --nummsgs 1
     else
       log_error "Could not determine if $project was foss or pe puppetdb"
       exit 3
