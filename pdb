@@ -141,6 +141,8 @@ usage_full() {
   $prn "    repl           Start the repl"
   $prn "    run            Run puppetdb/pe-puppetdb (lein run services)"
   $prn "    start          Start the postgres database"
+  $prn "        -- fsync"
+  $prn
   $prn "    stop           Stop the postgres database"
   $prn "    test           Run the unit tests"
   $prn "        :only [clojure.ns/test]+"
@@ -425,7 +427,7 @@ EOF
     elif test "${1:-}" = 'foss' -o -x $pdbbox_init -a "${1:-}" != 'pe'; then
       $pdbbox_init -s $pg_tmpdir_fullpath --pgbin "$pg_bin" --pgport ${pg_port:-`random_port`} --bind-addr localhost
     fi
-    $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
+    $pdbbox_env pg_ctl start -o -F > $pg_tmpdir_fullpath/pg.log
     ;;
   init-sync)
     pdb init -n sync1 -- pe
@@ -518,7 +520,12 @@ EOF
     fi
     ;;
   start)
-    $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
+    if [ "${1:-}" = "fsync" ]; then
+      shift
+      $pdbbox_env pg_ctl start > $pg_tmpdir_fullpath/pg.log
+    else
+      $pdbbox_env pg_ctl start -o -F > $pg_tmpdir_fullpath/pg.log
+    fi
     ;;
   stop)
     $pdbbox_env pg_ctl stop
