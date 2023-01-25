@@ -22,12 +22,12 @@ script_version='1.2.0'
 # time, but may differ between users.    #
 ##########################################
 # Full path to PDB project
-pdb_dir=~/wrk/pdb/puppetdb/main
-pe_pdb_dir=~/wrk/pdb/pe-puppetdb-extensions/main
+pdb_dir=~/wrk/pdb/7.x
+pe_pdb_dir=~/wrk/ext/7.x
 # Full path the postgres install
 # On a Mac it should look something like
 # pg_bin=/Applications/Postgres.app/Contents/Versions/11/bin/
-pg_bin=/usr/pgsql-11/bin
+pg_bin=/usr/lib/postgresql/11/bin
 # Full path to postgres sandbox. All pg instances will live here
 # and the pg_tmpdir variable will select which one
 pg_sandbox=~/sandbox/pdb
@@ -501,7 +501,8 @@ EOF
     ;;
   pglog)
     set -x
-    ls -Art $pg_tmpdir_fullpath/pg/data/log | tail -n 1 | xargs -I{} tail -fn 50 ~/sandbox/pdb/tmp_pg/pg/data/log/{}
+    #ls -Art $pg_tmpdir_fullpath/pg/data/log | tail -n 1 | xargs -I{} tail -fn 50 ~/sandbox/pdb/tmp_pg/pg/data/log/{}
+    tail -fn 50 /$pg_tmpdir_fullpath/pg.log
     ;;
   psql)
     $pdbbox_env psql puppetdb
@@ -514,7 +515,7 @@ EOF
   run)
     verify_pwd
     if [ "$project" = 'foss' ]; then
-      $pdbbox_env $nice_cmd lein run services -c $pg_tmpdir_fullpath/conf.d
+      $pdbbox_env $nice_cmd lein run "${1:-services}" -c $pg_tmpdir_fullpath/conf.d
     elif [ "$project" = 'pe' ]; then
       $pdbbox_env $nice_cmd lein run services -c $pg_tmpdir_fullpath/pe.conf
     fi
@@ -533,8 +534,9 @@ EOF
   test)
     verify_pwd
 
+    set -x
     # Run the unit tests
-    $pdbbox_env $nice_cmd lein test $test_only
+    $pdbbox_env time eatmydata lein test $test_only 2>&1 | tee last-test-run.log
     ;;
   ext)
     verify_foss_pwd
