@@ -14,6 +14,11 @@
 
 set -euo pipefail
 
+pg_bin_path() {
+  local pg_ver="$1"
+  printf "/usr/lib/postgresql/$pg_ver/bin"
+}
+
 script_version='1.2.0'
 ##########################################
 # Static configs                         #
@@ -27,7 +32,7 @@ pe_pdb_dir=~/wrk/ext/7.x
 # Full path the postgres install
 # On a Mac it should look something like
 # pg_bin=/Applications/Postgres.app/Contents/Versions/11/bin/
-pg_bin=/usr/lib/postgresql/11/bin
+pg_bin="$(pg_bin_path 15)"
 # Full path to postgres sandbox. All pg instances will live here
 # and the pg_tmpdir variable will select which one
 pg_sandbox=~/sandbox/pdb
@@ -251,7 +256,7 @@ while [ ! $# -eq 0 ]; do
       shift 2
       ;;
     --pgver)
-      pg_bin="/usr/pgsql-$2/bin"
+      pg_bin="$(pg_bin_path $2)"
       shift 2
       ;;
     --version)
