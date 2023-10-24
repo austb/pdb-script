@@ -386,10 +386,26 @@ case $subcommand in
     fi
 
     if [ "$project" = "foss" ]; then
-      PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein trampoline run benchmark -c $pg_tmpdir_fullpath/conf.d \
-        --numhosts "$numhosts" --rand-perc 10 --nummsgs 1
-    elif [ "$project" = "pe" ]; then
       cat > "$pg_tmpdir_fullpath/benchmark.ini" <<EOF
+[global]
+logging-config = $pg_tmpdir_fullpath/logback.xml
+
+[jetty]
+ssl-host = localhost
+ssl-port = 8081
+ssl-ca-cert = test-resources/ca.pem
+ssl-cert = test-resources/localhost.pem
+ssl-key = test-resources/localhost.key
+EOF
+      PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein trampoline run benchmark -c $pg_tmpdir_fullpath/benchmark.ini \
+        --numhosts "$numhosts" --rand-perc 101 \
+        --catalogs  $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/catalogs \
+        --reports $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/reports \
+        --facts $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/facts \
+        --nummsgs 1
+        # --runinterval 30
+    elif [ "$project" = "pe" ]; then
+      cat > "$pg_tmpdir_fullpath/pe-benchmark.ini" <<EOF
 [global]
 logging-config = $pg_tmpdir_fullpath/logback.xml
 
@@ -399,11 +415,11 @@ port = $(cat $pg_tmpdir_fullpath/pe-port)
 EOF
 
       $pdbbox_env $nice_cmd lein run benchmark \
-        --config $pg_tmpdir_fullpath/benchmark.ini \
-        --catalogs $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/catalogs \
-        --reports $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/reports \
-        --facts $pdb_dir/resources/puppetlabs/puppetdb/benchmark/samples/facts \
-        --numhosts "$numhosts" --rand-perc 10 --nummsgs 1
+        --config $pg_tmpdir_fullpath/pe-benchmark.ini \
+        --catalogs  $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/catalogs \
+        --reports $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/reports \
+        --facts $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/facts \
+        --numhosts "$numhosts"  --nummsgs 1 # --rand-perc 10
     else
       log_error "Could not determine if $project was foss or pe puppetdb"
       exit 3
