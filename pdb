@@ -149,7 +149,7 @@ usage_full() {
 
   $prn "Commands"
   $prn "    benchmark      Submit benchmark data to (pe-)puppetdb"
-  $prn "        -- [number of nodes]"
+  $prn "        -- [number of nodes [host offset]]"
   $prn "    clean          Clean up unneeded files (lein distclean)"
   $prn "    edit           Edit the puppetdb config files"
   $prn "    integration    Run the integration tests"
@@ -380,8 +380,14 @@ case $subcommand in
   benchmark)
     verify_pwd
     numhosts=10
-    if [ "$#" -eq 1 ]; then
+    if [ "$#" -gt 0 ]; then
       numhosts="$1"
+      shift
+    fi
+
+    offset=0
+    if [ "$#" -gt 0 ]; then
+      offset="$1"
       shift
     fi
 
@@ -398,7 +404,7 @@ ssl-cert = test-resources/localhost.pem
 ssl-key = test-resources/localhost.key
 EOF
       PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein trampoline run benchmark -c $pg_tmpdir_fullpath/benchmark.ini \
-        --numhosts "$numhosts" --rand-perc 101 \
+        --numhosts "$numhosts" --offset "$offset" --rand-perc 101 \
         --catalogs  $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/catalogs \
         --reports $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/reports \
         --facts $pdb_dir/resources/puppetlabs/puppetdb/generate/realistic/facts \
