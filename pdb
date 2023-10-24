@@ -438,6 +438,28 @@ EOF
   edit)
     $EDITOR $pg_tmpdir_fullpath/{conf.d/pdb.ini,pe.conf,conf.d/auth.conf}
     ;;
+  generate)
+      set -x
+      PDBBOX=$pg_tmpdir_fullpath $pdbbox_env $nice_cmd lein run generate \
+        --num-classes 100 \
+        --num-resources 800 \
+        --title-size 40 \
+        --resource-size 500 \
+        --additional-edge-percent 15 \
+        --blob-count 2 \
+        --blob-size 40 \
+        --num-facts 400 \
+        --total-fact-size 15 \
+        --max-fact-depth 7 \
+        --num-packages 1000 \
+        --num-reports 20 \
+        --high-change-reports-percent 5 \
+        --high-change-resources-percent 60 \
+        --low-change-reports-percent 15 \
+        --low-change-resources-percent 5 \
+        --num-additional-logs 10 \
+        --percent-add-report-logs 20
+    ;;
   integration)
     verify_foss_pwd
     run_tests=0
