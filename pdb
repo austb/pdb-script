@@ -19,6 +19,22 @@ pg_bin_path() {
   printf "/usr/lib/postgresql/$pg_ver/bin"
 }
 
+is_foss_pwd() {
+  if grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null ; then
+    return 0
+  fi
+
+  return 1
+}
+
+is_pe_pwd() {
+  if grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null ; then
+    return 0
+  fi
+
+  return 1
+}
+
 script_version='1.2.0'
 ##########################################
 # Static configs                         #
@@ -26,9 +42,17 @@ script_version='1.2.0'
 # These configs should be stable across  #
 # time, but may differ between users.    #
 ##########################################
-# Full path to PDB project
-pdb_dir=~/wrk/pdb/7.x
-pe_pdb_dir=~/wrk/ext/7.x
+# Default full paths to the FOSS and PE projects. When run from either project, the script will use that instead
+pdb_dir=~/wrk/pdb/main
+if is_foss_pwd ; then
+  pdb_dir="$(pwd)"
+fi
+
+pe_pdb_dir=~/wrk/ext/main
+if is_pe_pwd ; then
+  pe_pdb_dir="$(pwd)"
+fi
+
 # Full path the postgres install
 # On a Mac it should look something like
 # pg_bin=/Applications/Postgres.app/Contents/Versions/11/bin/
@@ -182,24 +206,24 @@ elif grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null
   project='pe'
 fi
 
-verify_pwd() {
-  # if [ ! $(pwd) = $pe_pdb_dir -a ! $(pwd) = $pdb_dir ]; then
-  if ! (grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null || grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null) ; then
-    log_error "Current working directory $(pwd) does not appear to be puppetdb or pe-puppetdb-extensions"
-    exit 2
-  fi
-}
-
 verify_foss_pwd() {
-  if ! grep "defproject puppetlabs/puppetdb" project.clj &>/dev/null ; then
+  if ! is_foss_pwd ; then
     log_error "Current working directory $(pwd) does not appear to be puppetdb"
     exit 2
   fi
 }
 
 verify_pe_pwd() {
-  if ! grep "defproject puppetlabs/pe-puppetdb-extensions" project.clj &>/dev/null ; then
+  if ! is_pe_pwd ; then
     log_error "Current working directory $(pwd) does not appear to be pe-puppetdb-extensions"
+    exit 2
+  fi
+}
+
+verify_pwd() {
+  # if [ ! $(pwd) = $pe_pdb_dir -a ! $(pwd) = $pdb_dir ]; then
+  if ! (is_foss_pwd || is_pe_pwd) ; then
+    log_error "Current working directory $(pwd) does not appear to be puppetdb or pe-puppetdb-extensions"
     exit 2
   fi
 }
